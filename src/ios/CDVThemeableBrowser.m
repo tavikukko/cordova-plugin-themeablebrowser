@@ -62,7 +62,9 @@
 
 @interface CDVThemeableBrowser () {
     BOOL _isShown;
-    NSMutableString *_lastpostID;
+    int _framesOpened;  // number of frames opened since the last time browser exited
+    NSURL *initUrl;  // initial URL ThemeableBrowser opened with
+    NSURL *originalUrl;
 }
 @end
 
@@ -72,6 +74,7 @@
 - (void)pluginInitialize
 {
     _isShown = NO;
+    _framesOpened = 0;
     _callbackIdPattern = nil;
 }
 #else
@@ -80,6 +83,7 @@
     self = [super initWithWebView:theWebView];
     if (self != nil) {
         _isShown = NO;
+        _framesOpened = 0;
         _callbackIdPattern = nil;
     }
 
@@ -103,15 +107,15 @@
     [self.themeableBrowserViewController close];
 }
 
--(void)updateMenu:(CDVInvokedUrlCommand *)command{
-
-    NSArray *menuItems = [command argumentAtIndex:0];
-    [self.themeableBrowserViewController.browserOptions.menu setValue:menuItems forKey:kThemeableBrowserPropItems];
-}
-
 - (BOOL) isSystemUrl:(NSURL*)url
 {
-    if ([[url host] isEqualToString:@"itunes.apple.com"]) {
+    NSDictionary *systemUrls = @{
+                                 @"itunes.apple.com": @YES,
+                                 @"search.itunes.apple.com": @YES,
+                                 @"appsto.re": @YES
+                                 };
+
+    if (systemUrls[[url host]]) {
         return YES;
     }
 
@@ -135,8 +139,8 @@
         NSURL* baseUrl = [self.webView.request URL];
 #endif
         NSURL* absoluteUrl = [[NSURL URLWithString:url relativeToURL:baseUrl] absoluteURL];
-        [self recordPostID:absoluteUrl];
-        [self setLocalStorageToThemeableBrowser:absoluteUrl];
+
+        initUrl = absoluteUrl;
 
         if ([self isSystemUrl:absoluteUrl]) {
             target = kThemeableBrowserTargetSystem;
@@ -157,71 +161,6 @@
 
     [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-}
-
--(void)recordPostID:(NSURL *)url{
-
-    _lastpostID = [NSMutableString string];
-
-    if ([[url host]  rangeOfString:@"cdn.tiegushi.com"].location != NSNotFound) {
-        NSArray *array = [url.absoluteString componentsSeparatedByString:@"/"];
-        NSLog(@"lastpostID:%@",[array lastObject]);
-        _lastpostID = [array lastObject];
-    }
-}
-
--(void)setLocalStorageToThemeableBrowser:(NSURL *)url{
-    NSError *error = nil;
-    NSString *libDir = [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) lastObject];
-    NSLog(@"libDir:%@",libDir);
-    NSString *webviewlocalStorageDir= [libDir stringByAppendingPathComponent:@"WebKit/LocalStorage"];
-    NSString *wkWebviewlocalStorageDir= [libDir stringByAppendingPathComponent:@"WebKit/WebsiteData/LocalStorage"];
-    NSFileManager* fm=[NSFileManager defaultManager];
-
-    NSMutableDictionary *localStorageDic = [[NSMutableDictionary alloc] init];
-
-    if([fm fileExistsAtPath:wkWebviewlocalStorageDir]){
-        NSArray *fileList = [[NSArray alloc] init];
-        //fileList便是包含有该文件夹下所有文件的文件名及文件夹名的数组
-        fileList = [fm contentsOfDirectoryAtPath:wkWebviewlocalStorageDir error:&error];
-        for (NSString *file in fileList) {
-
-            if ([file hasPrefix:@"http"]) {
-                NSString *path = [wkWebviewlocalStorageDir stringByAppendingPathComponent:file];
-                NSData *data = [NSData dataWithContentsOfFile:path];
-                NSString *fileExtensionName = [file componentsSeparatedByString:@"."].lastObject;
-                [localStorageDic setObject:data forKey:fileExtensionName];
-            }
-        }
-    }
-    else{
-        NSArray *fileList = [[NSArray alloc] init];
-        //fileList便是包含有该文件夹下所有文件的文件名及文件夹名的数组
-        fileList = [fm contentsOfDirectoryAtPath:webviewlocalStorageDir error:&error];
-        for (NSString *file in fileList) {
-
-            if ([file hasPrefix:@"http_meteor.local"]) {
-                NSString *path = [webviewlocalStorageDir stringByAppendingPathComponent:file];
-                NSData *data = [NSData dataWithContentsOfFile:path];
-                NSString *fileExtensionName = [file componentsSeparatedByString:@"."].lastObject;
-                [localStorageDic setObject:data forKey:fileExtensionName];
-            }
-        }
-    }
-    if ([fm fileExistsAtPath:webviewlocalStorageDir]) {
-        NSNumber *port = url.port;
-        if (!port) {
-            port = [NSNumber numberWithUnsignedInt:0];
-        }
-        NSString *host = url.host;
-        NSString *scheme = url.scheme;
-        for (NSString *fileExtensionName in localStorageDic.allKeys) {
-            NSString *path = [webviewlocalStorageDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@_%@.%@",scheme,host,port,fileExtensionName]];
-
-            [localStorageDic[fileExtensionName] writeToFile:path options:NSDataWritingAtomic error:&error];
-
-        }
-    }
 }
 
 - (void)reload:(CDVInvokedUrlCommand*)command
@@ -351,14 +290,13 @@
     }
 
     // UIWebView options
-    //self.themeableBrowserViewController.webView.scalesPageToFit = browserOptions.zoom;
-    //self.themeableBrowserViewController.webView.mediaPlaybackRequiresUserAction = browserOptions.mediaplaybackrequiresuseraction;
-    //self.themeableBrowserViewController.webView.allowsInlineMediaPlayback = browserOptions.allowinlinemediaplayback;
-    self.themeableBrowserViewController.webView.scrollView.bounces = NO;
-//    if (IsAtLeastiOSVersion(@"6.0")) {
-//        self.themeableBrowserViewController.webView.keyboardDisplayRequiresUserAction = browserOptions.keyboarddisplayrequiresuseraction;
-//        self.themeableBrowserViewController.webView.suppressesIncrementalRendering = browserOptions.suppressesincrementalrendering;
-//    }
+    self.themeableBrowserViewController.webView.scalesPageToFit = browserOptions.zoom;
+    self.themeableBrowserViewController.webView.mediaPlaybackRequiresUserAction = browserOptions.mediaplaybackrequiresuseraction;
+    self.themeableBrowserViewController.webView.allowsInlineMediaPlayback = browserOptions.allowinlinemediaplayback;
+    if (IsAtLeastiOSVersion(@"6.0")) {
+        self.themeableBrowserViewController.webView.keyboardDisplayRequiresUserAction = browserOptions.keyboarddisplayrequiresuseraction;
+        self.themeableBrowserViewController.webView.suppressesIncrementalRendering = browserOptions.suppressesincrementalrendering;
+    }
 
     [self.themeableBrowserViewController navigateTo:url];
     if (!browserOptions.hidden) {
@@ -393,7 +331,14 @@
     // Run later to avoid the "took a long time" log message.
     dispatch_async(dispatch_get_main_queue(), ^{
         if (self.themeableBrowserViewController != nil) {
-            [self.viewController presentViewController:nav animated:animated completion:nil];
+            CGRect frame = [[UIScreen mainScreen] bounds];
+            UIWindow *tmpWindow = [[UIWindow alloc] initWithFrame:frame];
+            UIViewController *tmpController = [[UIViewController alloc] init];
+            [tmpWindow setRootViewController:tmpController];
+            [tmpWindow setWindowLevel:UIWindowLevelNormal];
+
+            [tmpWindow makeKeyAndVisible];
+            [tmpController presentViewController:nav animated:YES completion:nil];
         }
     });
 }
@@ -438,9 +383,7 @@
     if (!_injectedIframeBridge) {
         _injectedIframeBridge = YES;
         // Create an iframe bridge in the new document to communicate with the CDVThemeableBrowserViewController
-        [self.themeableBrowserViewController.webView evaluateJavaScript:@"(function(d){var e = _cdvIframeBridge = d.createElement('iframe');e.style.display='none';d.body.appendChild(e);})(document)" completionHandler:^(id _Nullable response, NSError * _Nullable error) {
-            NSLog(@"response:%@..error:%@",response,error);
-        }];
+        [self.themeableBrowserViewController.webView stringByEvaluatingJavaScriptFromString:@"(function(d){var e = _cdvIframeBridge = d.createElement('iframe');e.style.display='none';d.body.appendChild(e);})(document)"];
     }
 
     if (jsWrapper != nil) {
@@ -449,14 +392,10 @@
         if (sourceArrayString) {
             NSString* sourceString = [sourceArrayString substringWithRange:NSMakeRange(1, [sourceArrayString length] - 2)];
             NSString* jsToInject = [NSString stringWithFormat:jsWrapper, sourceString];
-            [self.themeableBrowserViewController.webView evaluateJavaScript:jsToInject completionHandler:^(id _Nullable response, NSError * _Nullable error) {
-                NSLog(@"response:%@..error:%@",response,error);
-            }];
+            [self.themeableBrowserViewController.webView stringByEvaluatingJavaScriptFromString:jsToInject];
         }
     } else {
-        [self.themeableBrowserViewController.webView evaluateJavaScript:source completionHandler:^(id _Nullable response, NSError * _Nullable error) {
-            NSLog(@"response:%@..error:%@",response,error);
-        }];
+        [self.themeableBrowserViewController.webView stringByEvaluatingJavaScriptFromString:source];
     }
 }
 
@@ -538,8 +477,10 @@
  * value to pass to the callback. [NSURL path] should take care of the URL-unescaping, and a JSON_EXCEPTION
  * is returned if the JSON is invalid.
  */
-- (BOOL)webView:(WKWebView*)theWebView shouldStartLoadWithURL:(NSURL *)url
+- (BOOL)webView:(UIWebView*)theWebView shouldStartLoadWithRequest:(NSURLRequest*)request navigationType:(UIWebViewNavigationType)navigationType
 {
+    NSURL* url = request.URL;
+    BOOL isTopLevelNavigation = [request.URL isEqual:[request mainDocumentURL]];
 
     // See if the url uses the 'gap-iab' protocol. If so, the host should be the id of a callback to execute,
     // and the path, if present, should be a JSON-encoded value to pass to the callback.
@@ -566,36 +507,33 @@
             [self.commandDelegate sendPluginResult:pluginResult callbackId:scriptCallbackId];
             return NO;
         }
-    } else if ((self.callbackId != nil)) {
+    } else if ([self isSystemUrl:url]) {
+        // Do not allow iTunes store links from ThemeableBrowser as they do not work
+        // instead open them with App Store app or Safari
+        [[UIApplication sharedApplication] openURL:url];
+
+        // only in the case where a redirect link is opened in a freshly started
+        // ThemeableBrowser frame, trigger ThemeableBrowserRedirectExternalOnOpen
+        // event. This event can be handled in the app-side -- for instance, to
+        // close the ThemeableBrowser as the frame will contain a blank page
+        if (
+            originalUrl != nil
+            && [[originalUrl absoluteString] isEqualToString:[initUrl absoluteString]]
+            && _framesOpened == 1
+            ) {
+            NSDictionary *event = @{
+                                    @"type": @"ThemeableBrowserRedirectExternalOnOpen",
+                                    @"message": @"ThemeableBrowser redirected to open an external app on fresh start"
+                                    };
+
+            [self emitEvent:event];
+        }
+
+        // do not load content in the web view since this URL is handled by an
+        // external app
+        return NO;
+    } else if ((self.callbackId != nil) && isTopLevelNavigation) {
         // Send a loadstart event for each top-level navigation (includes redirects).
-        NSString * urlStr = [url absoluteString];
-
-        if ([urlStr rangeOfString:@"cdn.tiegushi.com"].location != NSNotFound) {
-            NSArray *array = [urlStr componentsSeparatedByString:@"/"];
-            NSLog(@"toPost:%@",[array lastObject]);
-            if ([_lastpostID isEqualToString:[array lastObject]]) {
-                return YES;
-            }
-            [self recordPostID:url];
-            CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-                                                          messageAsDictionary:@{@"type":@"toPost", @"postId":[array lastObject]}];
-            [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
-
-            [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
-
-        }
-        if ([urlStr rangeOfString:@"chat.tiegushi.com"].location != NSNotFound) {
-            NSArray *array = [urlStr componentsSeparatedByString:@"/"];
-
-            NSLog(@"toChatRoom:%@",urlStr);
-
-            CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-                                                          messageAsDictionary:@{@"type":@"toChatRoom", @"postId":array[4]}];
-            [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
-
-            [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
-
-        }
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
                                                       messageAsDictionary:@{@"type":@"loadstart", @"url":[url absoluteString]}];
         [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
@@ -603,12 +541,22 @@
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
     }
 
+    // originalUrl is used to detect redirect. This works by storing the
+    // request URL of the original frame when it's about to be loaded. A redirect
+    // will cause shouldStartLoadWithRequest to be called again before the
+    // original frame finishes loading (originalUrl becomes nil upon the frame
+    // finishing loading). On second time shouldStartLoadWithRequest
+    // is called, this stored original frame's URL can be compared against
+    // the URL of the new request. A mismatch implies redirect.
+    originalUrl = request.URL;
+
     return YES;
 }
 
 - (void)webViewDidStartLoad:(WKWebView*)theWebView
 {
     _injectedIframeBridge = NO;
+    _framesOpened++;
 }
 
 - (void)webViewDidFinishLoad:(WKWebView*)theWebView
@@ -619,6 +567,10 @@
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
                                                       messageAsDictionary:@{@"type":@"loadstop", @"url":url}];
         [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
+
+        // once a web view finished loading a frame, reset the stored original
+        // URL of the frame so that it can be used to detect next redirection
+        originalUrl = nil;
 
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
     }
@@ -652,6 +604,7 @@
     self.callbackId = nil;
     self.callbackIdPattern = nil;
 
+    _framesOpened = 0;
     _isShown = NO;
 }
 
@@ -692,7 +645,6 @@
 
 #pragma mark CDVThemeableBrowserViewController
 
-
 @implementation CDVThemeableBrowserViewController
 
 @synthesize currentURL;
@@ -728,15 +680,14 @@
     if (!_browserOptions.fullscreen) {
         webViewBounds.size.height -= toolbarHeight;
     }
-    self.webView = [[WKWebView alloc] initWithFrame:webViewBounds];
+    self.webView = [[UIWebView alloc] initWithFrame:webViewBounds];
 
     self.webView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
 
     [self.view addSubview:self.webView];
     [self.view sendSubviewToBack:self.webView];
 
-    self.webView.navigationDelegate = self;
-    self.webView.UIDelegate = self;
+    self.webView.delegate = _webViewDelegate;
     self.webView.backgroundColor = [UIColor whiteColor];
 
     self.webView.clearsContextBeforeDrawing = YES;
@@ -744,19 +695,17 @@
     self.webView.contentMode = UIViewContentModeScaleToFill;
     self.webView.multipleTouchEnabled = YES;
     self.webView.opaque = YES;
-    //self.webView.scalesPageToFit = NO;
+    self.webView.scalesPageToFit = NO;
     self.webView.userInteractionEnabled = YES;
 
-    self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+    self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
     self.spinner.alpha = 1.000;
     self.spinner.autoresizesSubviews = YES;
     self.spinner.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
     self.spinner.clearsContextBeforeDrawing = NO;
     self.spinner.clipsToBounds = NO;
     self.spinner.contentMode = UIViewContentModeScaleToFill;
-    self.spinner.frame = CGRectMake(454.0, 231.0, 60.0, 60.0);
-    self.spinner.center = self.view.center;
-    self.spinner.color = [UIColor colorWithRed:30/255.0 green:144/255.0  blue:255/255.0 alpha:1];
+    self.spinner.frame = CGRectMake(454.0, 231.0, 20.0, 20.0);
     self.spinner.hidden = YES;
     self.spinner.hidesWhenStopped = YES;
     self.spinner.multipleTouchEnabled = NO;
@@ -947,7 +896,7 @@
     self.view.backgroundColor = [CDVThemeableBrowserViewController colorFromRGBA:[self getStringFromDict:_browserOptions.statusbar withKey:kThemeableBrowserPropColor withDefault:@"#ffffffff"]];
     [self.view addSubview:self.toolbar];
     // [self.view addSubview:self.addressLabel];
-    [self.view addSubview:self.spinner];
+    // [self.view addSubview:self.spinner];
 }
 
 /**
@@ -973,7 +922,7 @@
             altDensity = 1.0;
         }
         NSData* data = [NSData dataWithContentsOfFile:path];
-        result = [UIImage imageWithData:data scale:3.0];
+        result = [UIImage imageWithData:data scale:altDensity];
     }
 
     return result;
@@ -1358,12 +1307,6 @@
     }
 }
 
-- (void)jhCustomMenu:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
-{
-    NSLog(@"select: %ld", indexPath.row);
-    [self menuSelected:indexPath.row];
-}
-
 - (void)actionSheet:(UIActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     [self menuSelected:buttonIndex];
@@ -1474,31 +1417,44 @@
 }
 
 #pragma mark WkWebViewDelegate
-// 页面开始加载时调用
-- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation{
+
+- (void)webViewDidStartLoad:(WKWebView*)theWebView
+{
     // loading url, start spinner
 
     self.addressLabel.text = NSLocalizedString(@"Loading...", nil);
 
     [self.spinner startAnimating];
 
-    return [self.navigationDelegate webViewDidStartLoad:webView];
+    return [self.navigationDelegate webViewDidStartLoad:theWebView];
 }
-// 页面加载完成之后调用
-- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation{
+
+- (BOOL)webView:(WKWebView*)theWebView shouldStartLoadWithRequest:(NSURLRequest*)request navigationType:(UIWebViewNavigationType)navigationType
+{
+    BOOL isTopLevelNavigation = [request.URL isEqual:[request mainDocumentURL]];
+
+    if (isTopLevelNavigation) {
+        self.currentURL = request.URL;
+    }
+
+    [self updateButtonDelayed:theWebView];
+
+    return [self.navigationDelegate webView:theWebView shouldStartLoadWithRequest:request navigationType:navigationType];
+}
+
+- (void)webViewDidFinishLoad:(UIWebView*)theWebView
+{
     // update url, stop spinner, update back/forward
 
     self.addressLabel.text = [self.currentURL absoluteString];
-    [self updateButton:webView];
+    [self updateButton:theWebView];
 
     if (self.titleLabel && _browserOptions.title
         && !_browserOptions.title[kThemeableBrowserPropStaticText]
         && [self getBoolFromDict:_browserOptions.title withKey:kThemeableBrowserPropShowPageTitle]) {
         // Update title text to page title when title is shown and we are not
         // required to show a static text.
-        [self.webView evaluateJavaScript:@"document.title" completionHandler:^(id _Nullable response, NSError * _Nullable error) {
-            self.titleLabel.text = response;
-        }];
+        self.titleLabel.text = [self.webView stringByEvaluatingJavaScriptFromString:@"document.title"];
     }
 
     [self.spinner stopAnimating];
@@ -1514,72 +1470,26 @@
     //    from it must pass through its white-list. This *does* break PDFs that
     //    contain links to other remote PDF/websites.
     // More info at https://issues.apache.org/jira/browse/CB-2225
-    BOOL __block isPDF;
-    [webView evaluateJavaScript:@"document.body==null" completionHandler:^(id _Nullable responce, NSError * _Nullable error) {
-        isPDF = [@"true" isEqualToString :responce];
-    }];
+    BOOL isPDF = [@"true" isEqualToString :[theWebView stringByEvaluatingJavaScriptFromString:@"document.body==null"]];
     if (isPDF) {
         [CDVUserAgentUtil setUserAgent:_prevUserAgent lockToken:_userAgentLockToken];
     }
 
-    [self.navigationDelegate webViewDidFinishLoad:webView];
-
+    [self.navigationDelegate webViewDidFinishLoad:theWebView];
 }
-// 页面加载失败时调用
--(void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error{
-    [self updateButton:webView];
+
+- (void)webView:(WKWebView*)theWebView didFailLoadWithError:(NSError*)error
+{
+    [self updateButton:theWebView];
 
     [self.spinner stopAnimating];
 
     self.addressLabel.text = NSLocalizedString(@"Load Error", nil);
 
-    [self.navigationDelegate webView:webView didFailLoadWithError:error];
+    [self.navigationDelegate webView:theWebView didFailLoadWithError:error];
 }
 
-// 在收到响应后，决定是否跳转
-- (void)webView:(WKWebView *)webView decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler{
-    NSLog(@"%@", navigationResponse.response);
-
-    self.currentURL = navigationResponse.response.URL;
-    [self updateButtonDelayed:webView];
-
-
-    BOOL allow = [self.navigationDelegate webView:webView shouldStartLoadWithURL:navigationResponse.response.URL];
-    if (allow) {
-        return decisionHandler(WKNavigationResponsePolicyAllow);
-    }
-    decisionHandler(WKNavigationResponsePolicyCancel);
-}
-
-- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
-{
-    decisionHandler(WKNavigationActionPolicyAllow);
-}
-
--(WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures
-{
-    NSLog(@"createWebViewWithConfiguration");
-    if (!navigationAction.targetFrame.isMainFrame) {
-        [webView loadRequest:navigationAction.request];
-    }
-    return nil;
-}
-//- (BOOL)webView:(UIWebView*)theWebView shouldStartLoadWithRequest:(NSURLRequest*)request navigationType:(UIWebViewNavigationType)navigationType
-//{
-//    BOOL isTopLevelNavigation = [request.URL isEqual:[request mainDocumentURL]];
-//
-//    if (isTopLevelNavigation) {
-//        self.currentURL = request.URL;
-//    }
-//
-//    [self updateButtonDelayed:theWebView];
-//
-//    return [self.navigationDelegate webView:theWebView shouldStartLoadWithRequest:request navigationType:navigationType];
-//
-//}
-
-
-- (void)updateButton:(WKWebView*)theWebView
+- (void)updateButton:(UIWebView*)theWebView
 {
     if (self.backButton) {
         self.backButton.enabled = _browserOptions.backButtonCanClose || theWebView.canGoBack;
@@ -1700,6 +1610,12 @@
 #pragma mark CDVScreenOrientationDelegate
 
 @implementation CDVThemeableBrowserNavigationController : UINavigationController
+
+- (void) dismissViewControllerAnimated:(BOOL)flag completion:(void (^)(void))completion {
+    if ( self.presentedViewController) {
+        [super dismissViewControllerAnimated:flag completion:completion];
+    }
+}
 
 - (BOOL)shouldAutorotate
 {
