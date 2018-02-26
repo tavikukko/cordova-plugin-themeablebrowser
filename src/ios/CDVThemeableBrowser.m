@@ -20,7 +20,6 @@
 #import "CDVThemeableBrowser.h"
 #import <Cordova/CDVPluginResult.h>
 #import <Cordova/CDVUserAgentUtil.h>
-#import "JHCustomMenu.h"
 
 #define    kThemeableBrowserTargetSelf @"_self"
 #define    kThemeableBrowserTargetSystem @"_system"
@@ -693,11 +692,6 @@
 
 #pragma mark CDVThemeableBrowserViewController
 
-@interface CDVThemeableBrowserViewController ()<JHCustomMenuDelegate,WKNavigationDelegate,WKUIDelegate>
-
-@property (nonatomic, strong) JHCustomMenu *customMenu;
-
-@end
 
 @implementation CDVThemeableBrowserViewController
 
@@ -1302,32 +1296,61 @@
     [self emitEventForButton:_browserOptions.customButtons[index] withIndex:[NSNumber numberWithLong:index]];
 }
 
-- (void)goMenu:(UIButton *)sender
+- (void)goMenu:(id)sender
 {
     [self emitEventForButton:_browserOptions.menu];
 
     if (_browserOptions.menu && _browserOptions.menu[kThemeableBrowserPropItems]) {
         NSArray* menuItems = _browserOptions.menu[kThemeableBrowserPropItems];
-        NSMutableArray *textAry = [[NSMutableArray alloc] init];
-        NSMutableArray *imgAry = [[NSMutableArray alloc] init];
-        for (NSDictionary *menuItem  in menuItems) {
+        if (IsAtLeastiOSVersion(@"8.0")) {
+            // iOS > 8 implementation using UIAlertController, which is the new way
+            // to do this going forward.
+            UIAlertController *alertController = [UIAlertController
+                                                  alertControllerWithTitle:_browserOptions.menu[kThemeableBrowserPropTitle]
+                                                  message:nil
+                                                  preferredStyle:UIAlertControllerStyleActionSheet];
+            alertController.popoverPresentationController.sourceView
+            = self.menuButton;
+            alertController.popoverPresentationController.sourceRect
+            = self.menuButton.bounds;
 
-            [textAry addObject:menuItem[@"label"]];
-            [imgAry addObject:menuItem[@"image"]];
-        }
-        __weak __typeof(self) weakSelf = self;
-        if (!self.customMenu) {
-            self.customMenu = [[JHCustomMenu alloc] initWithDataArr:textAry origin:CGPointMake(0, self.toolbar.frame.origin.y+self.toolbar.frame.size.height+1) width:self.view.frame.size.width rowHeight:44];
-            _customMenu.delegate = self;
-            _customMenu.dismiss = ^() {
-                weakSelf.customMenu = nil;
-            };
-            _customMenu.arrImgName = imgAry;
-            [self.view addSubview:_customMenu];
+            for (NSInteger i = 0; i < menuItems.count; i++) {
+                NSInteger index = i;
+                NSDictionary *item = menuItems[index];
+
+                UIAlertAction *a = [UIAlertAction
+                                    actionWithTitle:item[@"label"]
+                                    style:UIAlertActionStyleDefault
+                                    handler:^(UIAlertAction *action) {
+                                        [self menuSelected:index];
+                                    }];
+                [alertController addAction:a];
+            }
+
+            if (_browserOptions.menu[kThemeableBrowserPropCancel]) {
+                UIAlertAction *cancelAction = [UIAlertAction
+                                               actionWithTitle:_browserOptions.menu[kThemeableBrowserPropCancel]
+                                               style:UIAlertActionStyleCancel
+                                               handler:nil];
+                [alertController addAction:cancelAction];
+            }
+
+            [self presentViewController:alertController animated:YES completion:nil];
         } else {
-            [_customMenu dismissWithCompletion:^(JHCustomMenu *object) {
-                weakSelf.customMenu = nil;
-            }];
+            // iOS < 8 implementation using UIActionSheet, which is deprecated.
+            UIActionSheet *popup = [[UIActionSheet alloc]
+                                    initWithTitle:_browserOptions.menu[kThemeableBrowserPropTitle]
+                                    delegate:self cancelButtonTitle:nil destructiveButtonTitle:nil otherButtonTitles:nil];
+
+            for (NSDictionary *item in menuItems) {
+                [popup addButtonWithTitle:item[@"label"]];
+            }
+            if (_browserOptions.menu[kThemeableBrowserPropCancel]) {
+                [popup addButtonWithTitle:_browserOptions.menu[kThemeableBrowserPropCancel]];
+                popup.cancelButtonIndex = menuItems.count;
+            }
+
+            [popup showFromRect:self.menuButton.frame inView:self.view animated:YES];
         }
     } else {
         [self.navigationDelegate emitWarning:kThemeableBrowserEmitCodeUndefined
