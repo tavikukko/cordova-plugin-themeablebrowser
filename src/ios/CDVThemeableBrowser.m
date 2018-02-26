@@ -104,19 +104,19 @@
     [self.themeableBrowserViewController close];
 }
 
+-(void)updateMenu:(CDVInvokedUrlCommand *)command{
+
+    NSArray *menuItems = [command argumentAtIndex:0];
+    [self.themeableBrowserViewController.browserOptions.menu setValue:menuItems forKey:kThemeableBrowserPropItems];
+}
+
 - (BOOL) isSystemUrl:(NSURL*)url
 {
-  NSDictionary *systemUrls = @{
-    @"itunes.apple.com": @YES,
-    @"search.itunes.apple.com": @YES,
-    @"appsto.re": @YES
-  };
+    if ([[url host] isEqualToString:@"itunes.apple.com"]) {
+        return YES;
+    }
 
-  if (systemUrls[[url host]]) {
-    return YES;
-  }
-
-  return NO;
+    return NO;
 }
 
 - (void)open:(CDVInvokedUrlCommand*)command
@@ -136,8 +136,8 @@
         NSURL* baseUrl = [self.webView.request URL];
 #endif
         NSURL* absoluteUrl = [[NSURL URLWithString:url relativeToURL:baseUrl] absoluteURL];
-
-        initUrl = absoluteUrl;
+        [self recordPostID:absoluteUrl];
+        [self setLocalStorageToThemeableBrowser:absoluteUrl];
 
         if ([self isSystemUrl:absoluteUrl]) {
             target = kThemeableBrowserTargetSystem;
@@ -158,6 +158,71 @@
 
     [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+-(void)recordPostID:(NSURL *)url{
+
+    _lastpostID = [NSMutableString string];
+
+    if ([[url host]  rangeOfString:@"cdn.tiegushi.com"].location != NSNotFound) {
+        NSArray *array = [url.absoluteString componentsSeparatedByString:@"/"];
+        NSLog(@"lastpostID:%@",[array lastObject]);
+        _lastpostID = [array lastObject];
+    }
+}
+
+-(void)setLocalStorageToThemeableBrowser:(NSURL *)url{
+    NSError *error = nil;
+    NSString *libDir = [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) lastObject];
+    NSLog(@"libDir:%@",libDir);
+    NSString *webviewlocalStorageDir= [libDir stringByAppendingPathComponent:@"WebKit/LocalStorage"];
+    NSString *wkWebviewlocalStorageDir= [libDir stringByAppendingPathComponent:@"WebKit/WebsiteData/LocalStorage"];
+    NSFileManager* fm=[NSFileManager defaultManager];
+
+    NSMutableDictionary *localStorageDic = [[NSMutableDictionary alloc] init];
+
+    if([fm fileExistsAtPath:wkWebviewlocalStorageDir]){
+        NSArray *fileList = [[NSArray alloc] init];
+        //fileList便是包含有该文件夹下所有文件的文件名及文件夹名的数组
+        fileList = [fm contentsOfDirectoryAtPath:wkWebviewlocalStorageDir error:&error];
+        for (NSString *file in fileList) {
+
+            if ([file hasPrefix:@"http"]) {
+                NSString *path = [wkWebviewlocalStorageDir stringByAppendingPathComponent:file];
+                NSData *data = [NSData dataWithContentsOfFile:path];
+                NSString *fileExtensionName = [file componentsSeparatedByString:@"."].lastObject;
+                [localStorageDic setObject:data forKey:fileExtensionName];
+            }
+        }
+    }
+    else{
+        NSArray *fileList = [[NSArray alloc] init];
+        //fileList便是包含有该文件夹下所有文件的文件名及文件夹名的数组
+        fileList = [fm contentsOfDirectoryAtPath:webviewlocalStorageDir error:&error];
+        for (NSString *file in fileList) {
+
+            if ([file hasPrefix:@"http_meteor.local"]) {
+                NSString *path = [webviewlocalStorageDir stringByAppendingPathComponent:file];
+                NSData *data = [NSData dataWithContentsOfFile:path];
+                NSString *fileExtensionName = [file componentsSeparatedByString:@"."].lastObject;
+                [localStorageDic setObject:data forKey:fileExtensionName];
+            }
+        }
+    }
+    if ([fm fileExistsAtPath:webviewlocalStorageDir]) {
+        NSNumber *port = url.port;
+        if (!port) {
+            port = [NSNumber numberWithUnsignedInt:0];
+        }
+        NSString *host = url.host;
+        NSString *scheme = url.scheme;
+        for (NSString *fileExtensionName in localStorageDic.allKeys) {
+            NSString *path = [webviewlocalStorageDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@_%@.%@",scheme,host,port,fileExtensionName]];
+
+            [localStorageDic[fileExtensionName] writeToFile:path options:NSDataWritingAtomic error:&error];
+
+        }
+    }
 }
 
 - (void)reload:(CDVInvokedUrlCommand*)command
@@ -476,8 +541,6 @@
  */
 - (BOOL)webView:(WKWebView*)theWebView shouldStartLoadWithURL:(NSURL *)url
 {
-    NSURL* url = request.URL;
-    BOOL isTopLevelNavigation = [request.URL isEqual:[request mainDocumentURL]];
 
     // See if the url uses the 'gap-iab' protocol. If so, the host should be the id of a callback to execute,
     // and the path, if present, should be a JSON-encoded value to pass to the callback.
@@ -504,33 +567,36 @@
             [self.commandDelegate sendPluginResult:pluginResult callbackId:scriptCallbackId];
             return NO;
         }
-    } else if ([self isSystemUrl:url]) {
-      // Do not allow iTunes store links from ThemeableBrowser as they do not work
-      // instead open them with App Store app or Safari
-      [[UIApplication sharedApplication] openURL:url];
-
-      // only in the case where a redirect link is opened in a freshly started
-      // ThemeableBrowser frame, trigger ThemeableBrowserRedirectExternalOnOpen
-      // event. This event can be handled in the app-side -- for instance, to
-      // close the ThemeableBrowser as the frame will contain a blank page
-      if (
-        originalUrl != nil
-        && [[originalUrl absoluteString] isEqualToString:[initUrl absoluteString]]
-        && _framesOpened == 1
-      ) {
-        NSDictionary *event = @{
-          @"type": @"ThemeableBrowserRedirectExternalOnOpen",
-          @"message": @"ThemeableBrowser redirected to open an external app on fresh start"
-        };
-
-        [self emitEvent:event];
-      }
-
-      // do not load content in the web view since this URL is handled by an
-      // external app
-      return NO;
-    } else if ((self.callbackId != nil) && isTopLevelNavigation) {
+    } else if ((self.callbackId != nil)) {
         // Send a loadstart event for each top-level navigation (includes redirects).
+        NSString * urlStr = [url absoluteString];
+
+        if ([urlStr rangeOfString:@"cdn.tiegushi.com"].location != NSNotFound) {
+            NSArray *array = [urlStr componentsSeparatedByString:@"/"];
+            NSLog(@"toPost:%@",[array lastObject]);
+            if ([_lastpostID isEqualToString:[array lastObject]]) {
+                return YES;
+            }
+            [self recordPostID:url];
+            CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
+                                                          messageAsDictionary:@{@"type":@"toPost", @"postId":[array lastObject]}];
+            [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
+
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
+
+        }
+        if ([urlStr rangeOfString:@"chat.tiegushi.com"].location != NSNotFound) {
+            NSArray *array = [urlStr componentsSeparatedByString:@"/"];
+
+            NSLog(@"toChatRoom:%@",urlStr);
+
+            CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
+                                                          messageAsDictionary:@{@"type":@"toChatRoom", @"postId":array[4]}];
+            [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
+
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
+
+        }
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
                                                       messageAsDictionary:@{@"type":@"loadstart", @"url":[url absoluteString]}];
         [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
@@ -538,22 +604,12 @@
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
     }
 
-    // originalUrl is used to detect redirect. This works by storing the
-    // request URL of the original frame when it's about to be loaded. A redirect
-    // will cause shouldStartLoadWithRequest to be called again before the
-    // original frame finishes loading (originalUrl becomes nil upon the frame
-    // finishing loading). On second time shouldStartLoadWithRequest
-    // is called, this stored original frame's URL can be compared against
-    // the URL of the new request. A mismatch implies redirect.
-    originalUrl = request.URL;
-
     return YES;
 }
 
 - (void)webViewDidStartLoad:(WKWebView*)theWebView
 {
     _injectedIframeBridge = NO;
-    _framesOpened++;
 }
 
 - (void)webViewDidFinishLoad:(WKWebView*)theWebView
@@ -564,10 +620,6 @@
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
                                                       messageAsDictionary:@{@"type":@"loadstop", @"url":url}];
         [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
-
-        // once a web view finished loading a frame, reset the stored original
-        // URL of the frame so that it can be used to detect next redirection
-        originalUrl = nil;
 
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
     }
@@ -601,7 +653,6 @@
     self.callbackId = nil;
     self.callbackIdPattern = nil;
 
-    _framesOpened = 0;
     _isShown = NO;
 }
 
@@ -641,6 +692,12 @@
 @end
 
 #pragma mark CDVThemeableBrowserViewController
+
+@interface CDVThemeableBrowserViewController ()<JHCustomMenuDelegate,WKNavigationDelegate,WKUIDelegate>
+
+@property (nonatomic, strong) JHCustomMenu *customMenu;
+
+@end
 
 @implementation CDVThemeableBrowserViewController
 
@@ -1245,66 +1302,43 @@
     [self emitEventForButton:_browserOptions.customButtons[index] withIndex:[NSNumber numberWithLong:index]];
 }
 
-- (void)goMenu:(id)sender
+- (void)goMenu:(UIButton *)sender
 {
     [self emitEventForButton:_browserOptions.menu];
 
     if (_browserOptions.menu && _browserOptions.menu[kThemeableBrowserPropItems]) {
         NSArray* menuItems = _browserOptions.menu[kThemeableBrowserPropItems];
-        if (IsAtLeastiOSVersion(@"8.0")) {
-            // iOS > 8 implementation using UIAlertController, which is the new way
-            // to do this going forward.
-            UIAlertController *alertController = [UIAlertController
-                                                  alertControllerWithTitle:_browserOptions.menu[kThemeableBrowserPropTitle]
-                                                  message:nil
-                                                  preferredStyle:UIAlertControllerStyleActionSheet];
-            alertController.popoverPresentationController.sourceView
-                    = self.menuButton;
-            alertController.popoverPresentationController.sourceRect
-                    = self.menuButton.bounds;
+        NSMutableArray *textAry = [[NSMutableArray alloc] init];
+        NSMutableArray *imgAry = [[NSMutableArray alloc] init];
+        for (NSDictionary *menuItem  in menuItems) {
 
-            for (NSInteger i = 0; i < menuItems.count; i++) {
-                NSInteger index = i;
-                NSDictionary *item = menuItems[index];
-
-                UIAlertAction *a = [UIAlertAction
-                                     actionWithTitle:item[@"label"]
-                                     style:UIAlertActionStyleDefault
-                                     handler:^(UIAlertAction *action) {
-                                         [self menuSelected:index];
-                                     }];
-                [alertController addAction:a];
-            }
-
-            if (_browserOptions.menu[kThemeableBrowserPropCancel]) {
-                UIAlertAction *cancelAction = [UIAlertAction
-                                               actionWithTitle:_browserOptions.menu[kThemeableBrowserPropCancel]
-                                               style:UIAlertActionStyleCancel
-                                               handler:nil];
-                [alertController addAction:cancelAction];
-            }
-
-            [self presentViewController:alertController animated:YES completion:nil];
+            [textAry addObject:menuItem[@"label"]];
+            [imgAry addObject:menuItem[@"image"]];
+        }
+        __weak __typeof(self) weakSelf = self;
+        if (!self.customMenu) {
+            self.customMenu = [[JHCustomMenu alloc] initWithDataArr:textAry origin:CGPointMake(0, self.toolbar.frame.origin.y+self.toolbar.frame.size.height+1) width:self.view.frame.size.width rowHeight:44];
+            _customMenu.delegate = self;
+            _customMenu.dismiss = ^() {
+                weakSelf.customMenu = nil;
+            };
+            _customMenu.arrImgName = imgAry;
+            [self.view addSubview:_customMenu];
         } else {
-            // iOS < 8 implementation using UIActionSheet, which is deprecated.
-            UIActionSheet *popup = [[UIActionSheet alloc]
-                                    initWithTitle:_browserOptions.menu[kThemeableBrowserPropTitle]
-                                    delegate:self cancelButtonTitle:nil destructiveButtonTitle:nil otherButtonTitles:nil];
-
-            for (NSDictionary *item in menuItems) {
-                [popup addButtonWithTitle:item[@"label"]];
-            }
-            if (_browserOptions.menu[kThemeableBrowserPropCancel]) {
-                [popup addButtonWithTitle:_browserOptions.menu[kThemeableBrowserPropCancel]];
-                popup.cancelButtonIndex = menuItems.count;
-            }
-
-            [popup showFromRect:self.menuButton.frame inView:self.view animated:YES];
+            [_customMenu dismissWithCompletion:^(JHCustomMenu *object) {
+                weakSelf.customMenu = nil;
+            }];
         }
     } else {
         [self.navigationDelegate emitWarning:kThemeableBrowserEmitCodeUndefined
                                  withMessage:@"Menu items undefined. No menu will be shown."];
     }
+}
+
+- (void)jhCustomMenu:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    NSLog(@"select: %ld", indexPath.row);
+    [self menuSelected:indexPath.row];
 }
 
 - (void)actionSheet:(UIActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex
@@ -1507,6 +1541,20 @@
     }
     return nil;
 }
+//- (BOOL)webView:(UIWebView*)theWebView shouldStartLoadWithRequest:(NSURLRequest*)request navigationType:(UIWebViewNavigationType)navigationType
+//{
+//    BOOL isTopLevelNavigation = [request.URL isEqual:[request mainDocumentURL]];
+//
+//    if (isTopLevelNavigation) {
+//        self.currentURL = request.URL;
+//    }
+//
+//    [self updateButtonDelayed:theWebView];
+//
+//    return [self.navigationDelegate webView:theWebView shouldStartLoadWithRequest:request navigationType:navigationType];
+//
+//}
+
 
 - (void)updateButton:(WKWebView*)theWebView
 {
