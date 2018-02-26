@@ -290,13 +290,13 @@
     }
 
     // UIWebView options
-    self.themeableBrowserViewController.webView.scalesPageToFit = browserOptions.zoom;
-    self.themeableBrowserViewController.webView.mediaPlaybackRequiresUserAction = browserOptions.mediaplaybackrequiresuseraction;
-    self.themeableBrowserViewController.webView.allowsInlineMediaPlayback = browserOptions.allowinlinemediaplayback;
-    if (IsAtLeastiOSVersion(@"6.0")) {
-        self.themeableBrowserViewController.webView.keyboardDisplayRequiresUserAction = browserOptions.keyboarddisplayrequiresuseraction;
-        self.themeableBrowserViewController.webView.suppressesIncrementalRendering = browserOptions.suppressesincrementalrendering;
-    }
+   // self.themeableBrowserViewController.webView.scalesPageToFit = browserOptions.zoom;
+   // self.themeableBrowserViewController.webView.mediaPlaybackRequiresUserAction = browserOptions.mediaplaybackrequiresuseraction;
+   // self.themeableBrowserViewController.webView.allowsInlineMediaPlayback = browserOptions.allowinlinemediaplayback;
+   // if (IsAtLeastiOSVersion(@"6.0")) {
+    //    self.themeableBrowserViewController.webView.keyboardDisplayRequiresUserAction = browserOptions.keyboarddisplayrequiresuseraction;
+    //    self.themeableBrowserViewController.webView.suppressesIncrementalRendering = browserOptions.suppressesincrementalrendering;
+    //}
 
     [self.themeableBrowserViewController navigateTo:url];
     if (!browserOptions.hidden) {
@@ -383,7 +383,9 @@
     if (!_injectedIframeBridge) {
         _injectedIframeBridge = YES;
         // Create an iframe bridge in the new document to communicate with the CDVThemeableBrowserViewController
-        [self.themeableBrowserViewController.webView stringByEvaluatingJavaScriptFromString:@"(function(d){var e = _cdvIframeBridge = d.createElement('iframe');e.style.display='none';d.body.appendChild(e);})(document)"];
+        [self.themeableBrowserViewController.webView evaluateJavaScript:@"(function(d){var e = _cdvIframeBridge = d.createElement('iframe');e.style.display='none';d.body.appendChild(e);})(document)" completionHandler:^(id _Nullable response, NSError * _Nullable error) {
+            NSLog(@"response:%@..error:%@",response,error);
+        }];
     }
 
     if (jsWrapper != nil) {
@@ -392,10 +394,14 @@
         if (sourceArrayString) {
             NSString* sourceString = [sourceArrayString substringWithRange:NSMakeRange(1, [sourceArrayString length] - 2)];
             NSString* jsToInject = [NSString stringWithFormat:jsWrapper, sourceString];
-            [self.themeableBrowserViewController.webView stringByEvaluatingJavaScriptFromString:jsToInject];
+            [self.themeableBrowserViewController.webView evaluateJavaScript:jsToInject completionHandler:^(id _Nullable response, NSError * _Nullable error) {
+                NSLog(@"response:%@..error:%@",response,error);
+            }];
         }
     } else {
-        [self.themeableBrowserViewController.webView stringByEvaluatingJavaScriptFromString:source];
+        [self.themeableBrowserViewController.webView evaluateJavaScript:source completionHandler:^(id _Nullable response, NSError * _Nullable error) {
+            NSLog(@"response:%@..error:%@",response,error);
+        }];
     }
 }
 
@@ -680,14 +686,14 @@
     if (!_browserOptions.fullscreen) {
         webViewBounds.size.height -= toolbarHeight;
     }
-    self.webView = [[UIWebView alloc] initWithFrame:webViewBounds];
+    self.webView = [[WKWebView alloc] initWithFrame:webViewBounds];
 
     self.webView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
 
     [self.view addSubview:self.webView];
     [self.view sendSubviewToBack:self.webView];
 
-    self.webView.delegate = _webViewDelegate;
+    //self.webView.delegate = _webViewDelegate;
     self.webView.backgroundColor = [UIColor whiteColor];
 
     self.webView.clearsContextBeforeDrawing = YES;
@@ -695,7 +701,7 @@
     self.webView.contentMode = UIViewContentModeScaleToFill;
     self.webView.multipleTouchEnabled = YES;
     self.webView.opaque = YES;
-    self.webView.scalesPageToFit = NO;
+    //self.webView.scalesPageToFit = NO;
     self.webView.userInteractionEnabled = YES;
 
     self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
@@ -1428,8 +1434,8 @@
 
     return [self.navigationDelegate webViewDidStartLoad:theWebView];
 }
-
-- (BOOL)webView:(WKWebView*)theWebView shouldStartLoadWithRequest:(NSURLRequest*)request navigationType:(UIWebViewNavigationType)navigationType
+/*
+- (BOOL)webView:(WKWebView*)theWebView shouldStartLoadWithRequest:(NSURLRequest*)request navigationType:(WKWebViewNavigationType)navigationType
 {
     BOOL isTopLevelNavigation = [request.URL isEqual:[request mainDocumentURL]];
 
@@ -1440,21 +1446,22 @@
     [self updateButtonDelayed:theWebView];
 
     return [self.navigationDelegate webView:theWebView shouldStartLoadWithRequest:request navigationType:navigationType];
-}
+}*/
 
-- (void)webViewDidFinishLoad:(UIWebView*)theWebView
-{
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation{
     // update url, stop spinner, update back/forward
 
     self.addressLabel.text = [self.currentURL absoluteString];
-    [self updateButton:theWebView];
+    [self updateButton:webView];
 
     if (self.titleLabel && _browserOptions.title
         && !_browserOptions.title[kThemeableBrowserPropStaticText]
         && [self getBoolFromDict:_browserOptions.title withKey:kThemeableBrowserPropShowPageTitle]) {
         // Update title text to page title when title is shown and we are not
         // required to show a static text.
-        self.titleLabel.text = [self.webView stringByEvaluatingJavaScriptFromString:@"document.title"];
+        [self.webView evaluateJavaScript:@"document.title" completionHandler:^(id _Nullable response, NSError * _Nullable error) {
+            self.titleLabel.text = response;
+        }];
     }
 
     [self.spinner stopAnimating];
@@ -1470,12 +1477,16 @@
     //    from it must pass through its white-list. This *does* break PDFs that
     //    contain links to other remote PDF/websites.
     // More info at https://issues.apache.org/jira/browse/CB-2225
-    BOOL isPDF = [@"true" isEqualToString :[theWebView stringByEvaluatingJavaScriptFromString:@"document.body==null"]];
+    BOOL __block isPDF;
+    [webView evaluateJavaScript:@"document.body==null" completionHandler:^(id _Nullable responce, NSError * _Nullable error) {
+        isPDF = [@"true" isEqualToString :responce];
+    }];
     if (isPDF) {
         [CDVUserAgentUtil setUserAgent:_prevUserAgent lockToken:_userAgentLockToken];
     }
 
-    [self.navigationDelegate webViewDidFinishLoad:theWebView];
+    [self.navigationDelegate webViewDidFinishLoad:webView];
+
 }
 
 - (void)webView:(WKWebView*)theWebView didFailLoadWithError:(NSError*)error
@@ -1489,7 +1500,7 @@
     [self.navigationDelegate webView:theWebView didFailLoadWithError:error];
 }
 
-- (void)updateButton:(UIWebView*)theWebView
+- (void)updateButton:(WKWebView*)theWebView
 {
     if (self.backButton) {
         self.backButton.enabled = _browserOptions.backButtonCanClose || theWebView.canGoBack;
