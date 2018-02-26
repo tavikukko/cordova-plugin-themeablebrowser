@@ -87,13 +87,13 @@
     NSString* _prevUserAgent;
     NSInteger _userAgentLockToken;
     UIStatusBarStyle _statusBarStyle;
-    
+
 #ifdef __CORDOVA_4_0_0
     CDVUIWebViewDelegate* _webViewDelegate;
 #else
     CDVWebViewDelegate* _webViewDelegate;
 #endif
-    
+
 }
 
 @property (nonatomic, strong) IBOutlet WKWebView* webView;
