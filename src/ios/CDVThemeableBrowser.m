@@ -18,6 +18,7 @@
  */
 
 #import "CDVThemeableBrowser.h"
+#import "CDVWKProcessPoolFactory.h"
 #import <Cordova/CDVPluginResult.h>
 #import <Cordova/CDVUserAgentUtil.h>
 #import "MainViewController.h"
@@ -60,6 +61,8 @@
 #define    TOOLBAR_DEF_HEIGHT 44.0
 #define    LOCATIONBAR_HEIGHT 21.0
 #define    FOOTER_HEIGHT ((TOOLBAR_HEIGHT) + (LOCATIONBAR_HEIGHT))
+
+#define    IAB_BRIDGE_NAME @"cordova_iab"
 
 #pragma mark CDVThemeableBrowser
 
@@ -364,22 +367,6 @@
         }
     }
     
-    NSMutableArray* cookies4 = [NSMutableArray arrayWithContentsOfFile:[self storagePath]];
-
-    for (NSDictionary* cookieData in cookies4) {
-        NSMutableDictionary *cookieProperties = [NSMutableDictionary dictionary];
-        [cookieProperties setObject:cookieData[@"Name"] forKey:NSHTTPCookieName];
-        [cookieProperties setObject:cookieData[@"Value"] forKey:NSHTTPCookieValue];
-        [cookieProperties setObject:cookieData[@"Domain"] forKey:NSHTTPCookieDomain];
-        [cookieProperties setObject:cookieData[@"Path"] forKey:NSHTTPCookiePath];
-        [cookieProperties setObject:cookieData[@"Version"] forKey:NSHTTPCookieVersion];
-        [cookieProperties setObject:cookieData[@"Secure"] forKey:NSHTTPCookieSecure];
-       // [cookieProperties setObject:@"86400" forKey:NSHTTPCookieMaximumAge];
-        [cookieProperties setObject:[NSDate dateWithTimeIntervalSinceNow:60*60*24*10] forKey:NSHTTPCookieExpires];
-
-        NSHTTPCookie *cookie2 = [NSHTTPCookie cookieWithProperties:cookieProperties];
-        [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:cookie2];
-    }
     
     if (self.themeableBrowserViewController == nil) {
         NSString* originalUA = [CDVUserAgentUtil originalUserAgent];
@@ -392,6 +379,23 @@
         if ([self.viewController conformsToProtocol:@protocol(CDVScreenOrientationDelegate)]) {
             self.themeableBrowserViewController.orientationDelegate = (UIViewController <CDVScreenOrientationDelegate>*)self.viewController;
         }
+    }
+    
+    NSMutableArray* cookies4 = [NSMutableArray arrayWithContentsOfFile:[self storagePath]];
+    
+    for (NSDictionary* cookieData in cookies4) {
+        NSMutableDictionary *cookieProperties = [NSMutableDictionary dictionary];
+        [cookieProperties setObject:cookieData[@"Name"] forKey:NSHTTPCookieName];
+        [cookieProperties setObject:cookieData[@"Value"] forKey:NSHTTPCookieValue];
+        [cookieProperties setObject:cookieData[@"Domain"] forKey:NSHTTPCookieDomain];
+        [cookieProperties setObject:cookieData[@"Path"] forKey:NSHTTPCookiePath];
+        [cookieProperties setObject:cookieData[@"Version"] forKey:NSHTTPCookieVersion];
+        [cookieProperties setObject:cookieData[@"Secure"] forKey:NSHTTPCookieSecure];
+        // [cookieProperties setObject:@"86400" forKey:NSHTTPCookieMaximumAge];
+        [cookieProperties setObject:[NSDate dateWithTimeIntervalSinceNow:60*60*24*10] forKey:NSHTTPCookieExpires];
+        
+        NSHTTPCookie *cookie2 = [NSHTTPCookie cookieWithProperties:cookieProperties];
+        [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:cookie2];
     }
     
     [self.themeableBrowserViewController showLocationBar:browserOptions.location];
@@ -767,7 +771,19 @@
     if (!_browserOptions.fullscreen) {
         webViewBounds.size.height -= toolbarHeight;
     }
-    self.webView = [[WKWebView alloc] initWithFrame:webViewBounds];
+    
+    WKUserContentController* userContentController = [[WKUserContentController alloc] init];
+    
+    WKWebViewConfiguration* configuration = [[WKWebViewConfiguration alloc] init];
+    configuration.userContentController = userContentController;
+    configuration.processPool = [[CDVWKProcessPoolFactory sharedFactory] sharedProcessPool];
+   // [configuration.userContentController addScriptMessageHandler:self name:IAB_BRIDGE_NAME];
+    
+    
+    self.webView = [[WKWebView alloc] initWithFrame:webViewBounds configuration:configuration];
+
+    
+   // self.webView = [[WKWebView alloc] initWithFrame:webViewBounds];
     
     self.webView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
     
