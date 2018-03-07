@@ -52,7 +52,8 @@
 @property (nonatomic) NSDictionary* backButton;
 @property (nonatomic) NSDictionary* forwardButton;
 @property (nonatomic) NSDictionary* closeButton;
-@property (nonatomic) NSDictionary* menu;
+@property (nonatomic) NSMutableDictionary* menu;
+@property (nonatomic) NSArray* cookies;
 @property (nonatomic) NSArray* customButtons;
 @property (nonatomic) BOOL backButtonCanClose;
 @property (nonatomic) BOOL disableAnimation;
@@ -76,8 +77,11 @@
 - (void)injectScriptCode:(CDVInvokedUrlCommand*)command;
 - (void)show:(CDVInvokedUrlCommand*)command;
 - (void)show:(CDVInvokedUrlCommand*)command withAnimation:(BOOL)animated;
+- (void)hide:(CDVInvokedUrlCommand*)command;
 - (void)reload:(CDVInvokedUrlCommand*)command;
+
 - (void)updateMenu:(CDVInvokedUrlCommand*)command;
+- (void)switchViewController:(CDVInvokedUrlCommand*)command;
 
 @end
 
@@ -87,13 +91,13 @@
     NSString* _prevUserAgent;
     NSInteger _userAgentLockToken;
     UIStatusBarStyle _statusBarStyle;
-
+    
 #ifdef __CORDOVA_4_0_0
     CDVUIWebViewDelegate* _webViewDelegate;
 #else
     CDVWebViewDelegate* _webViewDelegate;
 #endif
-
+    
 }
 
 @property (nonatomic, strong) IBOutlet WKWebView* webView;
@@ -108,11 +112,11 @@
 
 @property (nonatomic, strong) CDVThemeableBrowserOptions *browserOptions;
 
-
 @property (nonatomic, strong) NSArray* leftButtons;
 @property (nonatomic, strong) NSArray* rightButtons;
 
 @property (nonatomic, weak) id <CDVScreenOrientationDelegate> orientationDelegate;
+
 @property (nonatomic, weak) CDVThemeableBrowser* navigationDelegate;
 @property (nonatomic) NSURL* currentURL;
 @property (nonatomic) CGFloat titleOffset;
@@ -135,3 +139,4 @@
 @property (nonatomic, weak) id <CDVScreenOrientationDelegate> orientationDelegate;
 
 @end
+
